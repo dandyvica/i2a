@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"runtime/trace"
 )
 
+const FILE_TABLE = "files"
+
+// this will hold all FileInfo data structures for batch SQL insert
 var rows []FileInfo
 
 func main() {
@@ -28,7 +34,19 @@ func main() {
 	//───────────────────────────────────────────────────────────────────────────────────
 	// delete all rows if requested
 	//───────────────────────────────────────────────────────────────────────────────────
-	db.Exec("DELETE FROM files")
+	db.Exec(fmt.Sprintf("DELETE FROM %s", FILE_TABLE))
+
+	//───────────────────────────────────────────────────────────────────────────────────
+	// if -trace was requested
+	//───────────────────────────────────────────────────────────────────────────────────
+	if options.trace != "" {
+		f, err := os.OpenFile(options.trace, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			panic(err)
+		}
+		trace.Start(f)
+		defer trace.Stop()
+	}
 
 	//───────────────────────────────────────────────────────────────────────────────────
 	// to synchronize goroutines
@@ -44,16 +62,20 @@ func main() {
 	//───────────────────────────────────────────────────────────────────────────────────
 	// Create SQL pool to batch insert data
 	//───────────────────────────────────────────────────────────────────────────────────
-	// batch := make(chan FileInfo, 100)
-	// go sqlWorker(batch, &wg, db)
+	batch := make(chan FileInfo, 100)
+	context := Context{&wg, db, &mutex, batch}
+
+	go sqlWorker(batch, &context, &options)
 
 	//───────────────────────────────────────────────────────────────────────────────────
 	// Create worker pool to throttle goroutines
 	//───────────────────────────────────────────────────────────────────────────────────
-	jobs := make(chan Context, options.channelSize)
+	jobs := make(chan JobData, options.channelSize)
 	for w := 0; w < options.nbWorkers; w++ {
 		wg.Add(1)
-		go workerPool(jobs, &wg, &mutex, &options)
+		options.id = w
+		log.Printf("starting goroutine %d\n", w)
+		go worker2(jobs, &context, &options)
 	}
 
 	fileCount := 0
@@ -79,14 +101,12 @@ func main() {
 		}
 
 		// send job to any worker
-		jobs <- Context{path, entry, db}
+		jobs <- JobData{path, entry}
 
 		return nil
 	})
 
 	close(jobs)
-
-	log.Printf("%d files processed", fileCount)
 
 	if err != nil {
 		fmt.Printf("filepath.WalkDir() returned %v\n", err)
@@ -96,7 +116,9 @@ func main() {
 
 	// finally, add remaining rows left by any worker
 	log.Printf("# of remaining rows: %d", len(rows))
-	insertRows(db, rows)
+	context.db.Create(&rows)
+	//insertRows(&context, rows)
+	log.Printf("%d files processed", fileCount)
 
 	// get stats
 	elapsed := time.Since(start)

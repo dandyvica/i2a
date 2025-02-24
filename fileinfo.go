@@ -10,12 +10,11 @@ import (
 	"path/filepath"
 
 	"github.com/h2non/filetype"
-	"gorm.io/gorm"
 )
 
 // this will hold all information we want about files we meet
 type FileInfo struct {
-	gorm.Model
+	ID       uint
 	Name     string // name including full path
 	Size     int64  // file size in bytes
 	Hash     string // sha256 sum if any
@@ -65,11 +64,15 @@ func (f *FileInfo) getMagicOrHash(wantHash, wantMagic bool) {
 		data, err := os.ReadFile(f.Name)
 		if err != nil {
 			log.Printf("error <%s> opening file <%s>", err, f.Name)
+			f.Hash = fmt.Sprintf("unable to calculate hash due to error '%v'", err)
+			return
 		}
 
 		// calcultate hash
 		hash := sha256.Sum256(data)
+		data = nil
 		f.Hash = hex.EncodeToString(hash[:])
+		// log.Printf("hash for file %s is %s", f.Name, f.Hash)
 
 		// if in addition we want magic
 		if wantMagic {
@@ -77,12 +80,13 @@ func (f *FileInfo) getMagicOrHash(wantHash, wantMagic bool) {
 			f.Kind = kind.MIME.Value
 		}
 
-	} else {
+	} else if wantMagic {
 		// we only need to read the first 261 bytes to get the magic number
 		file, err := os.Open(f.Name)
 		if err != nil {
 			log.Printf("error <%s> opening file <%s>", err, f.Name)
 		}
+		defer file.Close()
 
 		head := make([]byte, 261)
 		file.Read(head)
@@ -93,5 +97,5 @@ func (f *FileInfo) getMagicOrHash(wantHash, wantMagic bool) {
 
 // this is used by GORM to set the table name
 func (FileInfo) TableName() string {
-	return "files"
+	return FILE_TABLE
 }

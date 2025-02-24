@@ -1,0 +1,12 @@
+# settings for I2A
+perf:
+  channels:
+    jobs: 100
+    sql: 100
+    
+  # number of go workers. 0 means the number is set to the number of the host's virtual CPUs
+  workers: 0
+
+hash:
+  # don't compute any hash if file size if large than 'maxsize'
+  maxsize: 20MiB

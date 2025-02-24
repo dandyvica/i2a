@@ -25,8 +25,9 @@ func getDB(opts *CliOptions) *gorm.DB {
 }
 
 // insert row into DB
-func insertRows(db *gorm.DB, rows []FileInfo) {
-	result := db.Create(&rows)
+func insertRows(ctx *Context, rows []FileInfo) {
+	defer ctx.wg.Done()
+	result := ctx.db.Create(&rows)
 
 	if result.Error == nil {
 		log.Printf("==============> %d inserted\n", len(rows))
